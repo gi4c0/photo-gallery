@@ -97,9 +97,10 @@ type photoOut struct {
 	Name        string `json:"name"`
 	Width       int    `json:"width"`
 	Height      int    `json:"height"`
-	ThumbURL    string `json:"thumbUrl"`
-	URL         string `json:"url"`
-	DownloadURL string `json:"downloadUrl,omitempty"`
+	ThumbURL    string `json:"thumbUrl"`              // ~800px, for grids
+	WebURL      string `json:"webUrl"`                // ~2048px, for the lightbox
+	OriginalURL string `json:"originalUrl,omitempty"` // studio only
+	DownloadURL string `json:"downloadUrl,omitempty"` // client only, while downloads are open
 }
 
 type galleryOut struct {
@@ -152,9 +153,8 @@ func (a *app) writeStudioGallery(w http.ResponseWriter, r *http.Request, status 
 	}
 	out := toGalleryOut(g, effectiveCover(g, photos), len(photos), time.Now())
 	out.Photos = make([]photoOut, 0, len(photos))
-	base := studioPhotoBase(g.ID)
 	for _, p := range photos {
-		out.Photos = append(out.Photos, p.out(base, false))
+		out.Photos = append(out.Photos, p.studioOut(g.ID))
 	}
 	writeJSON(w, status, out)
 }
@@ -189,8 +189,8 @@ func checkMonths(m int) error {
 	return nil
 }
 
-// newSlug returns a readable, unguessable link slug, e.g. "ana-ribeiro-k3x9m2...".
-// The random part carries 80 bits; the link is the client's only credential.
+// newSlug returns a readable, unguessable link token, e.g. "ana-ribeiro-<26 chars>".
+// The random part carries 128 bits; the link is the client's only credential.
 func newSlug(name string) string {
 	base := slug.Make(name)
 	if len(base) > 40 {
@@ -199,7 +199,7 @@ func newSlug(name string) string {
 	if base == "" {
 		base = "gallery"
 	}
-	b := make([]byte, 10)
+	b := make([]byte, 16)
 	_, _ = rand.Read(b) // crypto/rand.Read never returns an error
 	return base + "-" + strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b))
 }
@@ -285,10 +285,9 @@ func (a *app) getGallery(w http.ResponseWriter, r *http.Request) {
 
 func (a *app) updateGallery(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Name         *string `json:"name"`
-		ShotDate     *string `json:"shotDate"`
-		Months       *int    `json:"months"`
-		CoverPhotoID *string `json:"coverPhotoId"`
+		Name     *string `json:"name"`
+		ShotDate *string `json:"shotDate"`
+		Months   *int    `json:"months"`
 	}
 	if !decodeJSON(w, r, &in) {
 		return
@@ -316,16 +315,29 @@ func (a *app) updateGallery(w http.ResponseWriter, r *http.Request) {
 		}
 		g.Months = *in.Months
 	}
-	if in.CoverPhotoID != nil {
-		if _, err := a.photoByID(r.Context(), g.ID, *in.CoverPhotoID); errors.Is(err, errNotFound) {
-			writeError(w, http.StatusBadRequest, "cover photo is not in this gallery")
-			return
-		} else if err != nil {
-			serverError(w, err)
-			return
-		}
-		g.CoverPhotoID = sql.NullString{String: *in.CoverPhotoID, Valid: true}
+	if err := a.saveGallery(r.Context(), g); err != nil {
+		serverError(w, err)
+		return
 	}
+	a.writeStudioGallery(w, r, http.StatusOK, &g)
+}
+
+func (a *app) setCover(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		PhotoID string `json:"photoId"`
+	}
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	g := *galleryFrom(r)
+	if _, err := a.photoByID(r.Context(), g.ID, in.PhotoID); errors.Is(err, errNotFound) {
+		writeError(w, http.StatusBadRequest, "cover photo is not in this gallery")
+		return
+	} else if err != nil {
+		serverError(w, err)
+		return
+	}
+	g.CoverPhotoID = sql.NullString{String: in.PhotoID, Valid: true}
 	if err := a.saveGallery(r.Context(), g); err != nil {
 		serverError(w, err)
 		return

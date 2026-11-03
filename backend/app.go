@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/alexedwards/scs/sqlite3store"
@@ -20,6 +21,8 @@ type app struct {
 	db        *sql.DB
 	photosDir string
 	sessions  *scs.SessionManager
+	// linkMisses limits failed client-link lookups per IP to resist token guessing.
+	linkMisses *httprate.RateLimiter
 }
 
 func newSessionManager(db *sql.DB, secure bool) *scs.SessionManager {
@@ -29,26 +32,39 @@ func newSessionManager(db *sql.DB, secure bool) *scs.SessionManager {
 	sm.Cookie.Name = "session"
 	sm.Cookie.HttpOnly = true
 	sm.Cookie.Secure = secure
-	// Lax keeps the cookie off cross-site POST/PATCH/DELETE requests (CSRF protection).
 	sm.Cookie.SameSite = http.SameSiteLaxMode
 	return sm
 }
 
 func (a *app) routes() http.Handler {
 	r := chi.NewRouter()
-	r.Use(middleware.RequestID, middleware.Logger, middleware.Recoverer)
+	r.Use(middleware.RequestID, logRequests, middleware.Recoverer)
 
 	r.Route("/api", func(r chi.Router) {
-		// Studio (photographer) API: session cookie auth.
+		r.Get("/settings", a.getSettings)
+
+		// Studio API: session cookie auth.
 		r.Group(func(r chi.Router) {
 			r.Use(a.sessions.LoadAndSave)
-			r.With(httprate.Limit(10, time.Minute, httprate.WithKeyFuncs(keyByRemoteAddr))).
-				Post("/auth/login", a.login)
-			r.Post("/auth/logout", a.logout)
+			authLimit := httprate.Limit(10, time.Minute, httprate.WithKeyFuncs(keyByRemoteAddr))
+			r.Get("/register", a.registrationStatus)
+			r.With(authLimit).Post("/register", a.register)
+			r.With(authLimit).Post("/login", a.login)
+			r.Post("/logout", a.logout)
 
 			r.Group(func(r chi.Router) {
 				r.Use(a.requireUser)
-				r.Get("/auth/me", a.me)
+				r.Get("/me", a.me)
+				r.With(authLimit).Post("/password", a.changePassword)
+
+				r.Group(func(r chi.Router) {
+					r.Use(requireAdmin)
+					r.Patch("/settings", a.updateSettings)
+					r.Get("/users", a.listUsers)
+					r.Post("/users", a.createUser)
+					r.Delete("/users/{userID}", a.deleteUser)
+				})
+
 				r.Get("/galleries", a.listGalleries)
 				r.Post("/galleries", a.createGallery)
 				r.Route("/galleries/{galleryID}", func(r chi.Router) {
@@ -56,28 +72,57 @@ func (a *app) routes() http.Handler {
 					r.Get("/", a.getGallery)
 					r.Patch("/", a.updateGallery)
 					r.Delete("/", a.deleteGallery)
-					r.Post("/restart-period", a.restartPeriod)
+					r.Patch("/cover", a.setCover)
+					r.Post("/restart-download-period", a.restartPeriod)
 					r.Post("/rotate-link", a.rotateLink)
 					r.Post("/photos", a.uploadPhotos)
-					r.Put("/photos/order", a.reorderPhotos)
-					r.Post("/photos/delete", a.deletePhotos)
+					r.Delete("/photos", a.deletePhotos)
+					r.Patch("/photos/order", a.reorderPhotos)
 					r.Get("/photos/{photoID}/thumb", a.serveThumb)
+					r.Get("/photos/{photoID}/web", a.serveWeb)
 					r.Get("/photos/{photoID}/original", a.serveOriginal)
 				})
 			})
 		})
 
-		// Client API: the secret slug in the shared link is the only credential.
+		// Client API: the secret token in the shared link is the only credential.
+		// Originals are reachable only through the expiry-checked download routes.
 		r.Route("/g/{slug}", func(r chi.Router) {
 			r.Use(a.loadSharedGallery)
 			r.Get("/", a.clientGallery)
 			r.Get("/download.zip", a.clientDownloadAll)
 			r.Get("/photos/{photoID}/thumb", a.serveThumb)
-			r.Get("/photos/{photoID}/original", a.serveOriginal)
+			r.Get("/photos/{photoID}/web", a.serveWeb)
 			r.Get("/photos/{photoID}/download", a.clientDownloadPhoto)
 		})
 	})
-	return r
+
+	// Rejects cross-origin state-changing browser requests (CSRF), using
+	// Sec-Fetch-Site / Origin headers.
+	return http.NewCrossOriginProtection().Handler(r)
+}
+
+// logRequests logs each request with client-link tokens redacted: the token
+// is the gallery's credential and must not end up in logs.
+func logRequests(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+		next.ServeHTTP(ww, r)
+		log.Printf("%s %s %d %dB %s", r.Method, redactPath(r.URL.Path), ww.Status(), ww.BytesWritten(), time.Since(start).Round(time.Millisecond))
+	})
+}
+
+func redactPath(p string) string {
+	const prefix = "/api/g/"
+	if !strings.HasPrefix(p, prefix) {
+		return p
+	}
+	rest := p[len(prefix):]
+	if i := strings.IndexByte(rest, '/'); i >= 0 {
+		return prefix + "***" + rest[i:]
+	}
+	return prefix + "***"
 }
 
 // keyByRemoteAddr rate-limits by the TCP peer address. It ignores

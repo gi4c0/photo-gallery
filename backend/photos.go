@@ -16,19 +16,20 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/disintegration/imaging"
+	"github.com/gen2brain/heic"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
 
 const (
-	maxFileBytes     = 100 << 20 // per photo
-	maxUploadBytes   = 4 << 30   // per upload request
-	maxPixels        = 120e6     // guards against decompression bombs
-	thumbMaxSidePx   = 1200
-	thumbJPEGQuality = 82
+	maxFileBytes   = 100 << 20 // per photo
+	maxUploadBytes = 4 << 30   // per upload request
+	maxPixels      = 120e6     // guards against decompression bombs
+	thumbSidePx    = 800
+	webSidePx      = 2048
+	jpegQuality    = 82
 )
 
 type photo struct {
@@ -40,25 +41,33 @@ type photo struct {
 	Size        int64
 	Width       int
 	Height      int
-	HasThumb    bool
 }
 
-func (p photo) out(base string, withDownload bool) photoOut {
+func (p photo) studioOut(galleryID string) photoOut {
+	base := studioPhotoBase(galleryID) + p.ID
+	return photoOut{
+		ID: p.ID, Name: p.Name, Width: p.Width, Height: p.Height,
+		ThumbURL: base + "/thumb", WebURL: base + "/web", OriginalURL: base + "/original",
+	}
+}
+
+func (p photo) clientOut(slug string, downloadsOpen bool) photoOut {
+	base := "/api/g/" + slug + "/photos/" + p.ID
 	o := photoOut{
 		ID: p.ID, Name: p.Name, Width: p.Width, Height: p.Height,
-		ThumbURL: base + p.ID + "/thumb", URL: base + p.ID + "/original",
+		ThumbURL: base + "/thumb", WebURL: base + "/web",
 	}
-	if withDownload {
-		o.DownloadURL = base + p.ID + "/download"
+	if downloadsOpen {
+		o.DownloadURL = base + "/download"
 	}
 	return o
 }
 
-const photoCols = `id, gallery_id, name, ext, content_type, size, width, height, has_thumb`
+const photoCols = `id, gallery_id, name, ext, content_type, size, width, height`
 
 func scanPhoto(row interface{ Scan(...any) error }) (photo, error) {
 	var p photo
-	err := row.Scan(&p.ID, &p.GalleryID, &p.Name, &p.Ext, &p.ContentType, &p.Size, &p.Width, &p.Height, &p.HasThumb)
+	err := row.Scan(&p.ID, &p.GalleryID, &p.Name, &p.Ext, &p.ContentType, &p.Size, &p.Width, &p.Height)
 	if errors.Is(err, sql.ErrNoRows) {
 		return p, errNotFound
 	}
@@ -88,7 +97,8 @@ func (a *app) photoByID(ctx context.Context, galleryID, photoID string) (photo, 
 		`SELECT `+photoCols+` FROM photos WHERE gallery_id = ? AND id = ?`, galleryID, photoID))
 }
 
-// ---- file layout: PHOTOS_DIR/<galleryID>/<photoID><ext> and <photoID>_thumb.jpg ----
+// ---- file layout under PHOTOS_DIR/<galleryID>/:
+// <photoID><ext> (original, untouched), <photoID>_thumb.jpg, <photoID>_web.jpg ----
 
 func (a *app) galleryDir(galleryID string) string { return filepath.Join(a.photosDir, galleryID) }
 
@@ -100,8 +110,12 @@ func (a *app) thumbPath(p photo) string {
 	return filepath.Join(a.galleryDir(p.GalleryID), p.ID+"_thumb.jpg")
 }
 
+func (a *app) webPath(p photo) string {
+	return filepath.Join(a.galleryDir(p.GalleryID), p.ID+"_web.jpg")
+}
+
 func (a *app) removePhotoFiles(p photo) {
-	for _, path := range []string{a.originalPath(p), a.thumbPath(p)} {
+	for _, path := range []string{a.originalPath(p), a.thumbPath(p), a.webPath(p)} {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			log.Printf("remove %s: %v", path, err)
 		}
@@ -127,30 +141,51 @@ func sniffImage(head []byte) (contentType, ext string, ok bool) {
 	return "", "", false
 }
 
-// makeThumb writes a JPEG thumbnail and returns the display size of the
-// original (after EXIF rotation).
-func makeThumb(src, dst string) (w, h int, err error) {
-	f, err := os.Open(src)
+// decodeImage decodes an upload, applying EXIF/HEIF rotation.
+func decodeImage(path, contentType string) (image.Image, error) {
+	f, err := os.Open(path)
 	if err != nil {
-		return 0, 0, err
+		return nil, err
 	}
-	cfg, _, err := image.DecodeConfig(f)
-	f.Close()
+	defer f.Close()
+	var cfg image.Config
+	if contentType == "image/heic" {
+		cfg, err = heic.DecodeConfig(f)
+	} else {
+		cfg, _, err = image.DecodeConfig(f)
+	}
 	if err != nil {
-		return 0, 0, err
+		return nil, err
 	}
 	if float64(cfg.Width)*float64(cfg.Height) > maxPixels {
-		return 0, 0, errors.New("image dimensions too large")
+		return nil, errors.New("image dimensions too large")
 	}
-	img, err := imaging.Open(src, imaging.AutoOrientation(true))
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
+	if contentType == "image/heic" {
+		return heic.Decode(f)
+	}
+	return imaging.Decode(f, imaging.AutoOrientation(true))
+}
+
+// makeDerivatives writes the thumbnail and web-size JPEGs and returns the
+// display size of the original. HEIC originals thus get browser-friendly versions.
+func (a *app) makeDerivatives(p photo) (w, h int, err error) {
+	img, err := decodeImage(a.originalPath(p), p.ContentType)
 	if err != nil {
 		return 0, 0, err
 	}
-	b := img.Bounds()
-	thumb := imaging.Fit(img, thumbMaxSidePx, thumbMaxSidePx, imaging.Linear)
-	if err := imaging.Save(thumb, dst, imaging.JPEGQuality(thumbJPEGQuality)); err != nil {
-		return 0, 0, err
+	for _, d := range []struct {
+		path string
+		side int
+	}{{a.thumbPath(p), thumbSidePx}, {a.webPath(p), webSidePx}} {
+		// Fit never enlarges; small images are saved at their own size.
+		if err := imaging.Save(imaging.Fit(img, d.side, d.side, imaging.Linear), d.path, imaging.JPEGQuality(jpegQuality)); err != nil {
+			return 0, 0, err
+		}
 	}
+	b := img.Bounds()
 	return b.Dx(), b.Dy(), nil
 }
 
@@ -162,10 +197,7 @@ func cleanFileName(name string) string {
 		}
 		return r
 	}, name)
-	for utf8.RuneCountInString(name) > 200 {
-		_, size := utf8.DecodeLastRuneInString(name)
-		name = name[:len(name)-size]
-	}
+	name = truncateRunes(name, 200)
 	if name == "" || name == "." || name == "/" {
 		name = "photo"
 	}
@@ -184,6 +216,8 @@ func (e errReject) Error() string { return e.msg }
 
 // uploadPhotos accepts multipart/form-data with one or more "files" parts.
 // It streams each file to disk; valid files are added even if others are rejected.
+// Clients should send one file per request: that gives per-file progress, and
+// after a network failure only the failed files need resending.
 func (a *app) uploadPhotos(w http.ResponseWriter, r *http.Request) {
 	g := galleryFrom(r)
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
@@ -199,7 +233,6 @@ func (a *app) uploadPhotos(w http.ResponseWriter, r *http.Request) {
 
 	added := []photoOut{}
 	rejected := []rejectedFile{}
-	base := studioPhotoBase(g.ID)
 	for {
 		part, err := mr.NextPart()
 		if errors.Is(err, io.EOF) {
@@ -229,7 +262,7 @@ func (a *app) uploadPhotos(w http.ResponseWriter, r *http.Request) {
 			serverError(w, err)
 			return
 		default:
-			added = append(added, p.out(base, false))
+			added = append(added, p.studioOut(g.ID))
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"photos": added, "rejected": rejected})
@@ -267,21 +300,25 @@ func (a *app) savePhoto(ctx context.Context, galleryID, name string, src io.Read
 		return photo{}, err
 	}
 
-	// Go cannot decode HEIC; those are kept without a thumbnail or dimensions.
-	if ct != "image/heic" {
-		p.Width, p.Height, err = makeThumb(a.originalPath(p), a.thumbPath(p))
-		if err != nil {
-			a.removePhotoFiles(p)
-			return photo{}, errReject{"The image could not be read: " + err.Error()}
-		}
-		p.HasThumb = true
+	p.Width, p.Height, err = a.makeDerivatives(p)
+	if err != nil {
+		a.removePhotoFiles(p)
+		return photo{}, errReject{"The image could not be read: " + err.Error()}
 	}
 
-	_, err = a.db.ExecContext(ctx, `
-		INSERT INTO photos (`+photoCols+`, position)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,
-			(SELECT COALESCE(MAX(position), 0) + 1 FROM photos WHERE gallery_id = ?))`,
-		p.ID, p.GalleryID, p.Name, p.Ext, p.ContentType, p.Size, p.Width, p.Height, p.HasThumb, galleryID)
+	err = withTx(ctx, a.db, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO photos (`+photoCols+`, position)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?,
+				(SELECT COALESCE(MAX(position), 0) + 1 FROM photos WHERE gallery_id = ?))`,
+			p.ID, p.GalleryID, p.Name, p.Ext, p.ContentType, p.Size, p.Width, p.Height, galleryID); err != nil {
+			return err
+		}
+		// The first uploaded photo becomes the default cover.
+		_, err := tx.ExecContext(ctx,
+			`UPDATE galleries SET cover_photo_id = ? WHERE id = ? AND cover_photo_id IS NULL`, p.ID, galleryID)
+		return err
+	})
 	if err != nil {
 		a.removePhotoFiles(p)
 		return photo{}, err
@@ -336,7 +373,7 @@ func (a *app) reorderPhotos(w http.ResponseWriter, r *http.Request) {
 	a.writeStudioGallery(w, r, http.StatusOK, g)
 }
 
-// deletePhotos removes the listed photos. Unknown IDs are ignored.
+// deletePhotos removes the listed photos (DELETE with a JSON body). Unknown IDs are ignored.
 func (a *app) deletePhotos(w http.ResponseWriter, r *http.Request) {
 	g := galleryFrom(r)
 	var in struct {
@@ -358,7 +395,12 @@ func (a *app) deletePhotos(w http.ResponseWriter, r *http.Request) {
 			}
 			deleted = append(deleted, p)
 		}
-		return nil
+		// Deleting the cover (ON DELETE SET NULL) falls back to the first remaining photo.
+		_, err := tx.ExecContext(r.Context(), `
+			UPDATE galleries SET cover_photo_id =
+				(SELECT id FROM photos WHERE gallery_id = ? ORDER BY position LIMIT 1)
+			WHERE id = ? AND cover_photo_id IS NULL`, g.ID, g.ID)
+		return err
 	})
 	if err != nil {
 		serverError(w, err)
@@ -367,7 +409,7 @@ func (a *app) deletePhotos(w http.ResponseWriter, r *http.Request) {
 	for _, p := range deleted {
 		a.removePhotoFiles(p)
 	}
-	// cover_photo_id is cleared by ON DELETE SET NULL; reload to reflect it.
+	// Reload to reflect the cover change.
 	g2, err := scanGallery(a.db.QueryRowContext(r.Context(),
 		`SELECT `+galleryCols+` FROM galleries WHERE id = ?`, g.ID))
 	if err != nil {
@@ -422,11 +464,15 @@ func (a *app) serveThumb(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !p.HasThumb {
-		a.serveFile(w, r, a.originalPath(p), p.ContentType, "")
+	a.serveFile(w, r, a.thumbPath(p), "image/jpeg", "")
+}
+
+func (a *app) serveWeb(w http.ResponseWriter, r *http.Request) {
+	p, ok := a.photoFromURL(w, r)
+	if !ok {
 		return
 	}
-	a.serveFile(w, r, a.thumbPath(p), "image/jpeg", "")
+	a.serveFile(w, r, a.webPath(p), "image/jpeg", "")
 }
 
 func (a *app) serveOriginal(w http.ResponseWriter, r *http.Request) {

@@ -3,7 +3,6 @@ package main
 import (
 	"archive/zip"
 	"bytes"
-	"context"
 	"encoding/json"
 	"image"
 	"image/color"
@@ -76,9 +75,6 @@ func TestStudioAndClientFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if err := ensureUser(context.Background(), db, "studio@example.com", "secret-pass"); err != nil {
-		t.Fatal(err)
-	}
 	photosDir := filepath.Join(dir, "photos")
 	srv := httptest.NewServer(newApp(db, photosDir, false).routes())
 	defer srv.Close()
@@ -87,14 +83,36 @@ func TestStudioAndClientFlow(t *testing.T) {
 	studio := &testClient{t: t, base: srv.URL, http: &http.Client{Jar: jar}}
 	anon := &testClient{t: t, base: srv.URL, http: &http.Client{}}
 
+	// First registration becomes admin; afterwards registration is closed.
+	var reg struct {
+		Open bool `json:"open"`
+	}
+	if s := anon.json("GET", "/api/register", nil, &reg); s != 200 || !reg.Open {
+		t.Fatalf("registration status: %d %v", s, reg.Open)
+	}
+	var admin user
+	if s := studio.json("POST", "/api/register", map[string]string{"email": "studio@example.com", "password": "secret-pass", "studioName": "Light Studio"}, &admin); s != 201 || !admin.IsAdmin {
+		t.Fatalf("register: %d %+v", s, admin)
+	}
+	if s := anon.json("POST", "/api/register", map[string]string{"email": "late@example.com", "password": "secret-pass"}, nil); s != 403 {
+		t.Fatalf("second register: %d", s)
+	}
+	var st settings
+	if s := anon.json("GET", "/api/settings", nil, &st); s != 200 || st.StudioName != "Light Studio" {
+		t.Fatalf("settings: %d %+v", s, st)
+	}
+	if s := studio.json("POST", "/api/logout", nil, nil); s != 204 {
+		t.Fatalf("logout after register: %d", s)
+	}
+
 	// Auth.
 	if s := studio.json("GET", "/api/galleries", nil, nil); s != 401 {
 		t.Fatalf("unauthenticated list: %d", s)
 	}
-	if s := studio.json("POST", "/api/auth/login", map[string]string{"email": "studio@example.com", "password": "wrong"}, nil); s != 401 {
+	if s := studio.json("POST", "/api/login", map[string]string{"email": "studio@example.com", "password": "wrong"}, nil); s != 401 {
 		t.Fatalf("bad password: %d", s)
 	}
-	if s := studio.json("POST", "/api/auth/login", map[string]string{"email": "Studio@Example.com", "password": "secret-pass"}, nil); s != 200 {
+	if s := studio.json("POST", "/api/login", map[string]string{"email": "Studio@Example.com", "password": "secret-pass"}, nil); s != 200 {
 		t.Fatalf("login: %d", s)
 	}
 
@@ -132,19 +150,27 @@ func TestStudioAndClientFlow(t *testing.T) {
 		t.Fatalf("upload result: %+v", up)
 	}
 	a, b := up.Photos[0].ID, up.Photos[1].ID
+	if s := studio.json("GET", "/api/galleries/"+g.ID, nil, &g); s != 200 || g.CoverPhotoID != a {
+		t.Fatalf("default cover should be first upload: %d %+v", s, g)
+	}
+	for _, kind := range []string{"thumb", "web", "original"} {
+		if s := studio.do("GET", "/api/galleries/"+g.ID+"/photos/"+a+"/"+kind, nil, "", nil); s != 200 {
+			t.Fatalf("studio %s: %d", kind, s)
+		}
+	}
 
 	// Reorder, set cover.
-	if s := studio.json("PUT", "/api/galleries/"+g.ID+"/photos/order", map[string]any{"photoIds": []string{b}}, nil); s != 400 {
+	if s := studio.json("PATCH", "/api/galleries/"+g.ID+"/photos/order", map[string]any{"photoIds": []string{b}}, nil); s != 400 {
 		t.Fatalf("partial reorder: %d", s)
 	}
-	if s := studio.json("PUT", "/api/galleries/"+g.ID+"/photos/order", map[string]any{"photoIds": []string{b, a}}, &g); s != 200 || g.Photos[0].ID != b {
+	if s := studio.json("PATCH", "/api/galleries/"+g.ID+"/photos/order", map[string]any{"photoIds": []string{b, a}}, &g); s != 200 || g.Photos[0].ID != b {
 		t.Fatalf("reorder: %d %+v", s, g.Photos)
 	}
-	if s := studio.json("PATCH", "/api/galleries/"+g.ID, map[string]any{"coverPhotoId": a}, &g); s != 200 || g.CoverPhotoID != a {
+	if s := studio.json("PATCH", "/api/galleries/"+g.ID+"/cover", map[string]any{"photoId": b}, &g); s != 200 || g.CoverPhotoID != b {
 		t.Fatalf("set cover: %d %+v", s, g)
 	}
-	if s := studio.do("GET", "/api/galleries/"+g.ID+"/photos/"+a+"/thumb", nil, "", nil); s != 200 {
-		t.Fatalf("studio thumb: %d", s)
+	if s := studio.json("PATCH", "/api/galleries/"+g.ID+"/cover", map[string]any{"photoId": a}, &g); s != 200 || g.CoverPhotoID != a {
+		t.Fatalf("set cover back: %d %+v", s, g)
 	}
 	if s := anon.do("GET", "/api/galleries/"+g.ID+"/photos/"+a+"/thumb", nil, "", nil); s != 401 {
 		t.Fatalf("anon studio thumb: %d", s)
@@ -162,6 +188,15 @@ func TestStudioAndClientFlow(t *testing.T) {
 	}
 	if s := anon.do("GET", cg.Photos[0].DownloadURL, nil, "", nil); s != 200 {
 		t.Fatalf("client download: %d", s)
+	}
+	if cg.Photos[0].OriginalURL != "" {
+		t.Fatal("client must not get an original URL")
+	}
+	if s := anon.do("GET", "/api/g/"+g.Slug+"/photos/"+a+"/original", nil, "", nil); s < 400 {
+		t.Fatalf("client original route must not exist: %d", s)
+	}
+	if s := anon.do("GET", cg.Photos[0].WebURL, nil, "", nil); s != 200 {
+		t.Fatalf("client web: %d", s)
 	}
 	resp, err := http.Get(srv.URL + cg.DownloadAllURL)
 	if err != nil {
@@ -187,7 +222,7 @@ func TestStudioAndClientFlow(t *testing.T) {
 	if s := anon.do("GET", "/api/g/"+g.Slug+"/photos/"+a+"/thumb", nil, "", nil); s != 200 {
 		t.Fatalf("expired thumb: %d", s)
 	}
-	if s := studio.json("POST", "/api/galleries/"+g.ID+"/restart-period", nil, &g); s != 200 || !g.DownloadsOpen {
+	if s := studio.json("POST", "/api/galleries/"+g.ID+"/restart-download-period", nil, &g); s != 200 || !g.DownloadsOpen {
 		t.Fatalf("restart: %d %+v", s, g)
 	}
 
@@ -201,11 +236,56 @@ func TestStudioAndClientFlow(t *testing.T) {
 	}
 
 	// Deleting the cover photo falls back to the first remaining photo.
-	if s := studio.json("POST", "/api/galleries/"+g.ID+"/photos/delete", map[string]any{"photoIds": []string{a}}, &g); s != 200 || g.PhotoCount != 1 || g.CoverPhotoID != b {
+	if s := studio.json("DELETE", "/api/galleries/"+g.ID+"/photos", map[string]any{"photoIds": []string{a}}, &g); s != 200 || g.PhotoCount != 1 || g.CoverPhotoID != b {
 		t.Fatalf("delete photo: %d %+v", s, g)
 	}
 	if _, err := os.Stat(filepath.Join(photosDir, g.ID, a+".png")); !os.IsNotExist(err) {
 		t.Fatalf("photo file not removed: %v", err)
+	}
+
+	// Other users cannot see this gallery; only admins manage users.
+	var other user
+	if s := studio.json("POST", "/api/users", map[string]any{"email": "second@example.com", "password": "other-pass"}, &other); s != 201 || other.IsAdmin {
+		t.Fatalf("create user: %d %+v", s, other)
+	}
+	if s := studio.json("POST", "/api/users", map[string]any{"email": "SECOND@example.com", "password": "other-pass"}, nil); s != 400 {
+		t.Fatalf("duplicate user: %d", s)
+	}
+	jar2, _ := cookiejar.New(nil)
+	second := &testClient{t: t, base: srv.URL, http: &http.Client{Jar: jar2}}
+	if s := second.json("POST", "/api/login", map[string]string{"email": "second@example.com", "password": "other-pass"}, nil); s != 200 {
+		t.Fatalf("second login: %d", s)
+	}
+	var list []galleryOut
+	if s := second.json("GET", "/api/galleries", nil, &list); s != 200 || len(list) != 0 {
+		t.Fatalf("second user's list: %d %d", s, len(list))
+	}
+	if s := second.json("GET", "/api/galleries/"+g.ID, nil, nil); s != 404 {
+		t.Fatalf("second user reads admin gallery: %d", s)
+	}
+	if s := second.json("GET", "/api/users", nil, nil); s != 403 {
+		t.Fatalf("non-admin lists users: %d", s)
+	}
+	if s := studio.json("DELETE", "/api/users/"+admin.ID, nil, nil); s != 400 {
+		t.Fatalf("admin deletes self: %d", s)
+	}
+	if s := studio.json("DELETE", "/api/users/"+other.ID, nil, nil); s != 204 {
+		t.Fatalf("delete user: %d", s)
+	}
+	if s := second.json("GET", "/api/me", nil, nil); s != 401 {
+		t.Fatalf("deleted user still signed in: %d", s)
+	}
+
+	// Cross-origin browser writes are rejected (CSRF).
+	req, _ := http.NewRequest("DELETE", srv.URL+"/api/galleries/"+g.ID, nil)
+	req.Header.Set("Sec-Fetch-Site", "cross-site")
+	resp, err = studio.http.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 403 {
+		t.Fatalf("cross-site delete: %d", resp.StatusCode)
 	}
 
 	// Delete gallery.
@@ -220,10 +300,22 @@ func TestStudioAndClientFlow(t *testing.T) {
 	}
 
 	// Logout ends the session.
-	if s := studio.json("POST", "/api/auth/logout", nil, nil); s != 204 {
+	if s := studio.json("POST", "/api/logout", nil, nil); s != 204 {
 		t.Fatalf("logout: %d", s)
 	}
-	if s := studio.json("GET", "/api/auth/me", nil, nil); s != 401 {
+	if s := studio.json("GET", "/api/me", nil, nil); s != 401 {
 		t.Fatalf("me after logout: %d", s)
+	}
+}
+
+func TestRedactPath(t *testing.T) {
+	for in, want := range map[string]string{
+		"/api/g/ana-secret":                "/api/g/***",
+		"/api/g/ana-secret/photos/x/thumb": "/api/g/***/photos/x/thumb",
+		"/api/galleries/123":               "/api/galleries/123",
+	} {
+		if got := redactPath(in); got != want {
+			t.Errorf("redactPath(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

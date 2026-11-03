@@ -23,7 +23,13 @@ func (a *app) loadSharedGallery(next http.Handler) http.Handler {
 		g, err := scanGallery(a.db.QueryRowContext(r.Context(),
 			`SELECT `+galleryCols+` FROM galleries WHERE slug = ?`, chi.URLParam(r, "slug")))
 		if errors.Is(err, errNotFound) {
-			writeError(w, http.StatusNotFound, "gallery not found")
+			// Only misses count toward the limit, so real clients loading many photos are unaffected.
+			key, _ := keyByRemoteAddr(r)
+			if a.linkMisses.OnLimit(w, r, key) {
+				writeError(w, http.StatusTooManyRequests, "too many requests")
+				return
+			}
+			writeError(w, http.StatusNotFound, "This link is no longer active.")
 			return
 		}
 		if err != nil {
@@ -65,7 +71,7 @@ func (a *app) clientGallery(w http.ResponseWriter, r *http.Request) {
 		out.DownloadAllURL = prefix + "/download.zip"
 	}
 	for _, p := range photos {
-		out.Photos = append(out.Photos, p.out(prefix+"/photos/", open))
+		out.Photos = append(out.Photos, p.clientOut(g.Slug, open))
 	}
 	writeJSON(w, http.StatusOK, out)
 }

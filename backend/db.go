@@ -6,10 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"strings"
 
-	"github.com/google/uuid"
-	"golang.org/x/crypto/bcrypt"
 	_ "modernc.org/sqlite"
 )
 
@@ -17,8 +14,18 @@ const schema = `
 CREATE TABLE IF NOT EXISTS users (
 	id            TEXT PRIMARY KEY,
 	email         TEXT NOT NULL UNIQUE COLLATE NOCASE,
-	password_hash BLOB NOT NULL
+	password_hash BLOB NOT NULL,
+	is_admin      INTEGER NOT NULL DEFAULT 0,
+	created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Studio branding shared by the whole site; always exactly one row.
+CREATE TABLE IF NOT EXISTS settings (
+	id           INTEGER PRIMARY KEY CHECK (id = 1),
+	studio_name  TEXT NOT NULL DEFAULT '',
+	accent_color TEXT NOT NULL DEFAULT '#1C1B19'
+);
+INSERT OR IGNORE INTO settings (id) VALUES (1);
 
 CREATE TABLE IF NOT EXISTS galleries (
 	id             TEXT PRIMARY KEY,
@@ -39,9 +46,8 @@ CREATE TABLE IF NOT EXISTS photos (
 	ext          TEXT NOT NULL,             -- extension of the stored original
 	content_type TEXT NOT NULL,
 	size         INTEGER NOT NULL,
-	width        INTEGER NOT NULL DEFAULT 0, -- 0 when unknown (HEIC)
-	height       INTEGER NOT NULL DEFAULT 0,
-	has_thumb    INTEGER NOT NULL DEFAULT 0,
+	width        INTEGER NOT NULL,          -- display size after EXIF rotation
+	height       INTEGER NOT NULL,
 	position     INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS photos_gallery ON photos(gallery_id, position);
@@ -70,20 +76,6 @@ func openDB(path string) (*sql.DB, error) {
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
 	return db, nil
-}
-
-// ensureUser creates the account, or resets its password if it exists.
-func ensureUser(ctx context.Context, db *sql.DB, email, password string) error {
-	email = strings.TrimSpace(email)
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if err != nil {
-		return err
-	}
-	_, err = db.ExecContext(ctx, `
-		INSERT INTO users (id, email, password_hash) VALUES (?, ?, ?)
-		ON CONFLICT(email) DO UPDATE SET password_hash = excluded.password_hash`,
-		uuid.NewString(), email, hash)
-	return err
 }
 
 // withTx runs fn in a transaction and commits if fn returns nil.
