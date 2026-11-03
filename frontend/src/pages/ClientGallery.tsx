@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router';
-import { api, type ApiError, type ClientGallery as Gallery } from '../api';
+import { api, type ApiError, type ClientGallery as Gallery, type Photo } from '../api';
 import { useStudioName, useToast } from '../app';
 import { fmtDate, fmtLongDate, lastOpenDay } from '../format';
 import { CloseIcon, DownloadIcon, NextIcon, PrevIcon } from '../icons';
@@ -14,6 +14,7 @@ export default function ClientGallery() {
   const [error, setError] = useState('');
   const [view, setView] = useState<'cover' | 'grid'>('cover');
   const [lightbox, setLightbox] = useState(-1);
+  const maxCols = useMaxColumns();
 
   useEffect(() => {
     api.clientGallery(slug).then(
@@ -40,6 +41,9 @@ export default function ClientGallery() {
   const photos = gallery.photos ?? [];
   const cover = photos.find((p) => p.id === gallery.coverPhotoId) ?? photos[0];
   const canDownload = gallery.downloadsOpen;
+  // Never more columns than photos, so a small gallery stays centered.
+  const cols = Math.max(1, Math.min(maxCols, photos.length));
+  const columns = toColumns(photos, cols);
 
   if (view === 'cover') {
     return (
@@ -87,19 +91,23 @@ export default function ClientGallery() {
       {photos.length === 0 && <p className="coming-soon">Photos are coming soon.</p>}
 
       <main className="client-main">
-        <div className="masonry">
-          {photos.map((p, i) => (
-            <figure key={p.id} className="tile">
-              <button type="button" className="tile-btn" aria-label={`Open ${p.name}`} onClick={() => setLightbox(i)}
-                style={{ aspectRatio: `${p.width} / ${p.height}` }}>
-                <img src={p.thumbUrl} alt={p.name} loading="lazy" />
-              </button>
-              {canDownload && p.downloadUrl && (
-                <a className="tile-dl" href={p.downloadUrl} aria-label={`Download ${p.name}`}>
-                  <DownloadIcon />
-                </a>
-              )}
-            </figure>
+        <div className="masonry" style={{ maxWidth: cols * 440 }}>
+          {columns.map((col, c) => (
+            <div key={c} className="masonry-col">
+              {col.map(({ photo: p, index: i }) => (
+                <figure key={p.id} className="tile">
+                  <button type="button" className="tile-btn" aria-label={`Open ${p.name}`} onClick={() => setLightbox(i)}
+                    style={{ aspectRatio: `${p.width} / ${p.height}` }}>
+                    <img src={p.thumbUrl} alt={p.name} loading="lazy" />
+                  </button>
+                  {canDownload && p.downloadUrl && (
+                    <a className="tile-dl" href={p.downloadUrl} aria-label={`Download ${p.name}`}>
+                      <DownloadIcon />
+                    </a>
+                  )}
+                </figure>
+              ))}
+            </div>
           ))}
         </div>
       </main>
@@ -109,6 +117,31 @@ export default function ClientGallery() {
       )}
     </>
   );
+}
+
+// Columns by viewport width: 2 on phones, 3 on tablets, 4 on desktop.
+function useMaxColumns(): number {
+  const pick = () => (window.innerWidth < 640 ? 2 : window.innerWidth < 1024 ? 3 : 4);
+  const [n, setN] = useState(pick);
+  useEffect(() => {
+    const onResize = () => setN(pick());
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  return n;
+}
+
+// Masonry: each photo goes into the currently shortest column, using its
+// aspect ratio, so columns end at similar heights and none stays empty.
+function toColumns(photos: Photo[], cols: number) {
+  const columns: { photo: Photo; index: number }[][] = Array.from({ length: cols }, () => []);
+  const heights = new Array<number>(cols).fill(0);
+  photos.forEach((photo, index) => {
+    const c = heights.indexOf(Math.min(...heights));
+    columns[c].push({ photo, index });
+    heights[c] += photo.width ? photo.height / photo.width : 1;
+  });
+  return columns;
 }
 
 function Lightbox({ gallery, index, onIndex, onClose }: {
