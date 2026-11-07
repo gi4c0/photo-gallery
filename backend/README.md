@@ -261,6 +261,7 @@ $PHOTOS_DIR/
 | Link secrecy | Request logs replace the slug with `***`. Client responses send `no-referrer` and `noindex`. |
 | Isolation | Every studio query is filtered by the owner. Every photo lookup is filtered by gallery. |
 | Expiry | Enforced on the server for every download request. Originals are not reachable by clients otherwise. |
+| Caching | API responses, downloads and the ZIP send `Cache-Control: no-store`, so a CDN such as Cloudflare (which caches `*.zip` by default) never serves a download after expiry or link rotation, and every download is counted. Thumbnails and web-size images send `private, max-age=3600`: browsers may cache them, shared caches may not. |
 | Uploads | File type is detected from content, never from the extension or the client's claimed type. Size and pixel caps apply (see [Limits](#limits)). Files are served with `X-Content-Type-Options: nosniff`. |
 | Filenames | Only the base name is kept. Control characters and quotes are stripped, and names are capped at 200 characters. Disk paths use server-generated IDs only. |
 

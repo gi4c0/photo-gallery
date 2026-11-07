@@ -453,10 +453,13 @@ func (a *app) serveFile(w http.ResponseWriter, r *http.Request, path, contentTyp
 		return
 	}
 	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Cache-Control", "private, max-age=3600")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if disposition != "" {
+		// Downloads keep the no-store set by the API middleware: each one must
+		// reach the server to be counted and to pass the expiry check.
 		w.Header().Set("Content-Disposition", disposition)
+	} else {
+		w.Header().Set("Cache-Control", "private, max-age=3600")
 	}
 	http.ServeContent(w, r, "", st.ModTime(), f)
 }

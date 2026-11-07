@@ -41,6 +41,7 @@ func (a *app) routes() http.Handler {
 	r.Use(middleware.RequestID, logRequests, middleware.Recoverer)
 
 	r.Route("/api", func(r chi.Router) {
+		r.Use(noStore)
 		r.Get("/settings", a.getSettings)
 
 		// Studio API: session cookie auth.
@@ -123,6 +124,16 @@ func redactPath(p string) string {
 		return prefix + "***" + rest[i:]
 	}
 	return prefix + "***"
+}
+
+// noStore keeps API responses out of every cache unless a handler sets its
+// own Cache-Control. Without it, a CDN such as Cloudflare caches download.zip
+// by its extension and keeps serving it after the link is rotated or expires.
+func noStore(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		next.ServeHTTP(w, r)
+	})
 }
 
 // keyByClientIP rate-limits by client IP. It uses the TCP peer address,

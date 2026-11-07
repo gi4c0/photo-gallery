@@ -233,6 +233,23 @@ func TestStudioAndClientFlow(t *testing.T) {
 	if cg.Photos[0].Downloads != 0 {
 		t.Fatal("clients must not see download stats")
 	}
+	// Downloads and API errors must never be cached (a CDN caches *.zip by default);
+	// thumbnails may be cached privately by the browser.
+	for path, want := range map[string]string{
+		cg.DownloadAllURL:          "no-store",
+		cg.Photos[0].DownloadURL:   "no-store",
+		"/api/g/nope/download.zip": "no-store",
+		cg.Photos[0].ThumbURL:      "private, max-age=3600",
+	} {
+		r, err := http.Get(srv.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.Body.Close()
+		if got := r.Header.Get("Cache-Control"); got != want {
+			t.Fatalf("%s: Cache-Control %q, want %q", path, got, want)
+		}
+	}
 
 	// Expired period blocks downloads but not viewing.
 	if _, err := db.Exec(`UPDATE galleries SET shared_on = '2020-01-01' WHERE id = ?`, g.ID); err != nil {
