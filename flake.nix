@@ -38,7 +38,7 @@
           inherit version;
           src = ./frontend;
           # Update after changing package-lock.json: set to pkgs.lib.fakeHash, build, copy the hash from the error.
-          npmDepsHash = "sha256-eQAQ+QfrhHZw5wX14HpBYJzDBB59w4DKK6bTaBif/OY=";
+          npmDepsHash = "sha256-lgQ6N3eLM64q74RUO608tAgGf57wR2hcV6mkO3t5cf8=";
           installPhase = ''
             runHook preInstall
             cp -r dist $out
