@@ -84,4 +84,4 @@ Module options:
 
 The service runs as the `photogallery` system user with systemd sandboxing, and always sets `COOKIE_SECURE=true`. Back up `photosDir` and `dbPath` together.
 
-Behind a proxy, all clients share the proxy's address for rate limiting. See [Security](backend/README.md#security) in the backend README.
+For per-client rate limits, the proxy must run on the same host and set `X-Real-IP` to the client's address. See [Security](backend/README.md#security) in the backend README.

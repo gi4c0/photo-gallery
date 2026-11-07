@@ -24,7 +24,7 @@ func (a *app) loadSharedGallery(next http.Handler) http.Handler {
 			`SELECT `+galleryCols+` FROM galleries WHERE slug = ?`, chi.URLParam(r, "slug")))
 		if errors.Is(err, errNotFound) {
 			// Only misses count toward the limit, so real clients loading many photos are unaffected.
-			key, _ := keyByRemoteAddr(r)
+			key, _ := keyByClientIP(r)
 			if a.linkMisses.OnLimit(w, r, key) {
 				writeError(w, http.StatusTooManyRequests, "too many requests")
 				return

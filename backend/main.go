@@ -107,6 +107,6 @@ func newApp(db *sql.DB, photosDir string, cookieSecure bool) *app {
 		db:         db,
 		photosDir:  photosDir,
 		sessions:   newSessionManager(db, cookieSecure),
-		linkMisses: httprate.NewRateLimiter(20, time.Minute, httprate.WithKeyFuncs(keyByRemoteAddr)),
+		linkMisses: httprate.NewRateLimiter(20, time.Minute, httprate.WithKeyFuncs(keyByClientIP)),
 	}
 }

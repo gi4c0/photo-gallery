@@ -24,9 +24,9 @@ import (
 )
 
 const (
-	maxFileBytes   = 100 << 20 // per photo
-	maxUploadBytes = 4 << 30   // per upload request
-	maxPixels      = 120e6     // guards against decompression bombs
+	maxFileBytes   = 95 << 20 // per photo; stays under the 100 MB request cap of Cloudflare's free plan
+	maxUploadBytes = 4 << 30  // per upload request
+	maxPixels      = 120e6    // guards against decompression bombs
 	thumbSidePx    = 800
 	webSidePx      = 2048
 	jpegQuality    = 82

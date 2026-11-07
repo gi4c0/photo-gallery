@@ -46,7 +46,7 @@ func (a *app) routes() http.Handler {
 		// Studio API: session cookie auth.
 		r.Group(func(r chi.Router) {
 			r.Use(a.sessions.LoadAndSave)
-			authLimit := httprate.Limit(10, time.Minute, httprate.WithKeyFuncs(keyByRemoteAddr))
+			authLimit := httprate.Limit(10, time.Minute, httprate.WithKeyFuncs(keyByClientIP))
 			r.Get("/register", a.registrationStatus)
 			r.With(authLimit).Post("/register", a.register)
 			r.With(authLimit).Post("/login", a.login)
@@ -125,13 +125,20 @@ func redactPath(p string) string {
 	return prefix + "***"
 }
 
-// keyByRemoteAddr rate-limits by the TCP peer address. It ignores
-// X-Forwarded-For, which any client can forge. Behind a reverse proxy all
-// clients share the proxy's address.
-func keyByRemoteAddr(r *http.Request) (string, error) {
+// keyByClientIP rate-limits by client IP. It uses the TCP peer address,
+// except when the peer is loopback: then the request came through the local
+// reverse proxy, which must set X-Real-IP to the client's address and
+// overwrite any value the client sent. X-Forwarded-For is never trusted,
+// because clients can append to it.
+func keyByClientIP(r *http.Request) (string, error) {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr, nil
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		if real := net.ParseIP(r.Header.Get("X-Real-IP")); real != nil {
+			return real.String(), nil
+		}
 	}
 	return host, nil
 }

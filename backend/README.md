@@ -252,13 +252,13 @@ $PHOTOS_DIR/
 | Uploads | File type is detected from content, never from the extension or the client's claimed type. Size and pixel caps apply (see [Limits](#limits)). Files are served with `X-Content-Type-Options: nosniff`. |
 | Filenames | Only the base name is kept. Control characters and quotes are stripped, and names are capped at 200 characters. Disk paths use server-generated IDs only. |
 
-Rate limits use the TCP peer address and ignore `X-Forwarded-For`, which clients can forge. Behind a reverse proxy, all clients share the proxy's address, so the limits apply to everyone together. To fix that, make the key function in `app.go` trust your proxy's header.
+Rate limits use the TCP peer address. When the peer is loopback, they use the `X-Real-IP` header instead, so a reverse proxy on the same host must set `X-Real-IP` to the client's address and overwrite any value the client sent. nginx with `recommendedProxySettings` does this. `X-Forwarded-For` is never used, because clients can forge it. A proxy on another host is not trusted, so all its clients share one limit.
 
 ## Limits
 
 | Limit | Value | Where |
 |-------|-------|-------|
-| Photo file size | 100 MB | `maxFileBytes`, `photos.go` |
+| Photo file size | 95 MB (under Cloudflare's 100 MB free-plan request cap) | `maxFileBytes`, `photos.go` |
 | Upload request size | 4 GB | `maxUploadBytes`, `photos.go` |
 | Image pixels | 120 MP (protects against decompression bombs) | `maxPixels`, `photos.go` |
 | JSON body | 1 MB | `decodeJSON`, `app.go` |
