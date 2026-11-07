@@ -210,7 +210,9 @@ type rejectedFile struct {
 }
 
 // errReject marks a problem with one file; the rest of the upload continues.
-type errReject struct{ msg string }
+type errReject struct {
+	msg string
+}
 
 func (e errReject) Error() string { return e.msg }
 

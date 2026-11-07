@@ -57,11 +57,15 @@ func (a *app) insertUser(ctx context.Context, email, password string, isAdmin, f
 	if err != nil {
 		return user{}, errReject{err.Error()}
 	}
+
 	hash, err := hashPassword(password)
+
 	if err != nil {
 		return user{}, err
 	}
+
 	u := user{ID: uuid.NewString(), Email: email, IsAdmin: isAdmin}
+
 	err = withTx(ctx, a.db, func(tx *sql.Tx) error {
 		if firstOnly {
 			var n int
@@ -72,17 +76,22 @@ func (a *app) insertUser(ctx context.Context, email, password string, isAdmin, f
 				return errRegistrationClosed
 			}
 		}
+
 		res, err := tx.ExecContext(ctx,
 			`INSERT INTO users (id, email, password_hash, is_admin) VALUES (?, ?, ?, ?)
 			 ON CONFLICT(email) DO NOTHING`, u.ID, u.Email, hash, u.IsAdmin)
+
 		if err != nil {
 			return err
 		}
+
 		if n, _ := res.RowsAffected(); n == 0 {
 			return errReject{"An account with this email already exists."}
 		}
+
 		return nil
 	})
+
 	return u, err
 }
 
@@ -217,8 +226,8 @@ func (a *app) changePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	newHash, err := hashPassword(in.NewPassword)
-	var rej errReject
-	if errors.As(err, &rej) {
+
+	if rej, ok := errors.AsType[errReject](err); ok {
 		writeError(w, http.StatusBadRequest, rej.msg)
 		return
 	} else if err != nil {
