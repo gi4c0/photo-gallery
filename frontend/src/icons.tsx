@@ -17,11 +17,10 @@ export const PlusIcon = () => <Icon d="M12 5v14M5 12h14" width={1.8} />;
 export const BackIcon = () => <Icon d="M15 6l-6 6 6 6" width={1.8} />;
 export const NextIcon = () => <Icon d="M9 6l6 6-6 6" size={20} />;
 export const PrevIcon = () => <Icon d="M15 6l-6 6 6 6" size={20} />;
-export const LeftIcon = () => <Icon d="M15 6l-6 6 6 6" size={16} />;
-export const RightIcon = () => <Icon d="M9 6l6 6-6 6" size={16} />;
 export const TrashIcon = () => <Icon d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" size={16} width={1.8} />;
 export const UploadIcon = () => <Icon d="M12 16V4M7 9l5-5 5 5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" size={26} width={1.5} />;
 export const DownloadIcon = ({ size = 18 }: { size?: number }) => <Icon d="M12 4v12M7 11l5 5 5-5M4 20h16" size={size} />;
+export const FilterIcon = () => <Icon d="M4 5h16l-6 7.5V19l-4-2v-4.5L4 5z" size={14} width={1.8} />;
 export const CloseIcon = () => <Icon d="M6 6l12 12M18 6L6 18" size={22} />;
 export const LinkIcon = () => (
   <Icon d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" size={16} width={1.8} />

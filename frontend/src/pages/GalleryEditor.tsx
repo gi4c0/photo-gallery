@@ -2,8 +2,8 @@ import { useEffect, useRef, useState, type DragEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { api, uploadPhoto, type ApiError, type Gallery, type Photo } from '../api';
 import { useToast } from '../app';
-import { downloadsText, fmtDate, lastOpenDay, plural } from '../format';
-import { BackIcon, EyeIcon, LeftIcon, LinkIcon, RightIcon, StarIcon, TrashIcon, UploadIcon } from '../icons';
+import { downloadsText, fmtDate, fmtShortDateTime, lastOpenDay, plural } from '../format';
+import { BackIcon, DownloadIcon, EyeIcon, FilterIcon, LinkIcon, StarIcon, TrashIcon, UploadIcon } from '../icons';
 
 interface Upload {
   key: string;
@@ -31,6 +31,7 @@ export default function GalleryEditor() {
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [copied, setCopied] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [downloadedOnly, setDownloadedOnly] = useState(false);
   const uploadingRef = useRef(false);
   const refreshAfterUploads = useRef(false);
   const copyTimer = useRef<number | undefined>(undefined);
@@ -133,14 +134,6 @@ export default function GalleryEditor() {
     ids.splice(fromIdx <= toIdx ? toIdx + 1 : toIdx, 0, from);
     reorder(ids);
   };
-  const moveBy = (pid: string, delta: number) => {
-    const ids = photos.map((p) => p.id);
-    const i = ids.indexOf(pid);
-    const j = i + delta;
-    if (j < 0 || j >= ids.length) return;
-    [ids[i], ids[j]] = [ids[j], ids[i]];
-    reorder(ids);
-  };
 
   const removePhotos = (ids: string[]) => {
     setSelected(new Set());
@@ -184,8 +177,13 @@ export default function GalleryEditor() {
     }
   };
 
-  const selIds = photos.filter((p) => selected.has(p.id)).map((p) => p.id);
-  const allSelected = photos.length > 0 && selIds.length === photos.length;
+  // The filter only hides photos; reordering is disabled while it is on,
+  // because a drop must place a photo within the full order.
+  const downloadedCount = photos.filter((p) => p.downloads).length;
+  const shown = downloadedOnly ? photos.filter((p) => p.downloads) : photos;
+  const position = new Map(photos.map((p, i) => [p.id, i + 1]));
+  const selIds = shown.filter((p) => selected.has(p.id)).map((p) => p.id);
+  const allSelected = shown.length > 0 && selIds.length === shown.length;
   const toggle = (pid: string) =>
     setSelected((s) => {
       const n = new Set(s);
@@ -225,13 +223,24 @@ export default function GalleryEditor() {
           <div className="row between wrap gap-12 align-end">
             <div>
               <h1 className="h1-wide">{gallery.name}</h1>
-              <p className="muted sub">{plural(photos.length, 'photo')} · drag photos to reorder</p>
+              <p className="muted sub">
+                {plural(photos.length, 'photo')} · {downloadedOnly ? 'showing downloaded photos' : 'drag photos to reorder'}
+              </p>
             </div>
             {photos.length > 0 && (
-              <button type="button" className="btn btn-outline btn-sm" onClick={() =>
-                setSelected(allSelected ? new Set() : new Set(photos.map((p) => p.id)))}>
-                {allSelected ? 'Deselect all' : 'Select all'}
-              </button>
+              <div className="row gap-8 wrap">
+                <button type="button" aria-pressed={downloadedOnly}
+                  className={'btn btn-sm ' + (downloadedOnly ? 'btn-primary' : 'btn-outline')}
+                  onClick={() => { setDownloadedOnly(!downloadedOnly); setSelected(new Set()); }}>
+                  <FilterIcon /> Downloaded ({downloadedCount})
+                </button>
+                {shown.length > 0 && (
+                  <button type="button" className="btn btn-outline btn-sm" onClick={() =>
+                    setSelected(allSelected ? new Set() : new Set(shown.map((p) => p.id)))}>
+                    {allSelected ? 'Deselect all' : 'Select all'}
+                  </button>
+                )}
+              </div>
             )}
           </div>
 
@@ -290,13 +299,17 @@ export default function GalleryEditor() {
             </ul>
           )}
 
+          {downloadedOnly && shown.length === 0 && (
+            <div className="empty">Your client hasn't downloaded any single photos yet.</div>
+          )}
+
           <div className="photo-grid">
-            {photos.map((p, i) => {
+            {shown.map((p) => {
               const isCover = gallery.coverPhotoId === p.id;
               const ringed = selected.has(p.id) || (dragId !== null && overId === p.id && dragId !== p.id);
               return (
                 <div key={p.id} className={'photo-card' + (ringed ? ' ringed' : '') + (dragId === p.id ? ' dragging' : '')}
-                  draggable
+                  draggable={!downloadedOnly}
                   onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', p.id); setDragId(p.id); }}
                   onDragEnter={() => dragId && setOverId(p.id)}
                   onDragOver={(e) => e.preventDefault()}
@@ -315,13 +328,12 @@ export default function GalleryEditor() {
                     </button>
                     {isCover && <span className="cover-tag">Cover</span>}
                   </div>
-                  <div className="photo-name">{i + 1}. {p.name}</div>
-                  <div className="muted small">{downloadsText(p.downloads, p.lastDownloadedAt)}</div>
+                  <div className="photo-name">{position.get(p.id)}. {p.name}</div>
+                  <div className={'photo-dl' + (p.downloads ? ' done' : '')} title={downloadsText(p.downloads, p.lastDownloadedAt)}>
+                    <DownloadIcon size={12} />
+                    {p.downloads && p.lastDownloadedAt ? `${p.downloads} · ${fmtShortDateTime(p.lastDownloadedAt)}` : 'Not downloaded'}
+                  </div>
                   <div className="photo-actions">
-                    <button type="button" className="act-btn" aria-label={`Move ${p.name} earlier`} disabled={i === 0}
-                      onClick={() => moveBy(p.id, -1)}><LeftIcon /></button>
-                    <button type="button" className="act-btn" aria-label={`Move ${p.name} later`} disabled={i === photos.length - 1}
-                      onClick={() => moveBy(p.id, 1)}><RightIcon /></button>
                     <button type="button" className="act-btn act-del" aria-label={`Delete ${p.name}`}
                       onClick={() => removePhotos([p.id])}><TrashIcon /> Delete</button>
                   </div>

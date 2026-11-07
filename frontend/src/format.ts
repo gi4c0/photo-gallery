@@ -40,6 +40,11 @@ export function fmtDateTime(iso: string): string {
   });
 }
 
+// Compact form for tight spaces, e.g. "Nov 7, 10:25 PM".
+export function fmtShortDateTime(iso: string): string {
+  return new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
 // Download statistics, e.g. "2 downloads · last Nov 5, 2026, 2:02 PM".
 export function downloadsText(count = 0, last?: string): string {
   return count && last ? `${plural(count, 'download')} · last ${fmtDateTime(last)}` : 'Not downloaded yet';

@@ -217,14 +217,19 @@ button:not(:disabled), a, label { cursor: pointer; }
   position: absolute; left: 6px; bottom: 6px; padding: 4px 7px; background: var(--ink); color: #FFFFFF;
   font-size: 10px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase;
 }
-.photo-name { padding: 8px 10px 6px; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.photo-name { padding: 8px 10px 2px; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.photo-dl {
+  display: flex; align-items: center; gap: 5px; padding: 0 10px 8px; font-size: 11px; color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.photo-dl svg { flex: 0 0 auto; }
+.photo-dl.done { color: var(--ok); }
 .photo-actions { display: flex; border-top: 1px solid var(--line-soft); }
 .act-btn {
   height: 44px; min-width: 40px; display: flex; align-items: center; justify-content: center; gap: 6px;
   background: none; border: 0; font-size: 13px;
 }
-.act-btn:disabled { opacity: 0.25; }
-.act-del { flex: 1; color: var(--danger); border-left: 1px solid var(--line-soft); }
+.act-del { flex: 1; color: var(--danger); }
 
 .expiry-box { display: flex; gap: 10px; align-items: flex-start; padding: 12px; background: #F3F6F1; font-size: 14px; line-height: 1.45; }
 .expiry-box .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); margin-top: 6px; flex: 0 0 auto; }
@@ -321,3 +326,4 @@ button:not(:disabled), a, label { cursor: pointer; }
   background: none; border: 0; color: var(--muted);
 }
 .password-toggle:hover { color: var(--ink); }
+.photo-card[draggable="false"] .photo-thumb { cursor: default; }
