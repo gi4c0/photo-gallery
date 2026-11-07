@@ -72,6 +72,16 @@ The server does not terminate TLS. In production, run it behind a reverse proxy 
 | `downloadsOpen`| `true` while today is before `expiresOn`. Derived on every request, so changing `months` or restarting the period takes effect at once. |
 | `slug`         | The secret token in the client link. |
 | `coverPhotoId` | Cover photo. Defaults to the first uploaded photo. If the cover is deleted, it falls back to the first remaining photo in display order. |
+| `zipDownloads`, `zipLastDownloadedAt` | How many times clients started the "download all" ZIP, and when last (UTC, RFC 3339). Only in `GET /api/galleries/{id}` and other single-gallery responses; omitted while zero. |
+
+### Download statistics
+
+The server counts client downloads, for the photographer only:
+
+- **Per gallery:** each started "download all" ZIP.
+- **Per photo:** each started single-photo download, as `downloads` and `lastDownloadedAt` on studio photo objects. ZIP downloads do not count toward photos.
+
+A request counts when it starts, whether or not it finishes. A `Range` request that resumes a download from a later offset does not count again. Only a number and a last timestamp are stored: no IP address, user agent or per-download history. Client responses never include the statistics.
 
 The creation UI offers 1, 2, 3, 6, 9 and 12 months or no limit. The editor offers 1, 3, 6 and 12 months or no limit. The API accepts any value from 0 to 120.
 
@@ -162,12 +172,14 @@ Every gallery endpoint except upload returns the full gallery object after the c
   "photoCount": 2,
   "photos": [
     {"id": "…", "name": "IMG_2051.jpg", "width": 4000, "height": 6000,
-     "thumbUrl": "…/thumb", "webUrl": "…/web", "originalUrl": "…/original"}
-  ]
+     "thumbUrl": "…/thumb", "webUrl": "…/web", "originalUrl": "…/original",
+     "downloads": 2, "lastDownloadedAt": "2026-11-05T14:02:11Z"}
+  ],
+  "zipDownloads": 1, "zipLastDownloadedAt": "2026-11-05T13:58:40Z"
 }
 ```
 
-The list endpoint returns the same shape without `photos`. To build the share URL, the frontend combines its own origin with `/g/{slug}`.
+The list endpoint returns the same shape without `photos` and without download statistics. To build the share URL, the frontend combines its own origin with `/g/{slug}`.
 
 #### Uploading
 
@@ -232,7 +244,7 @@ $PHOTOS_DIR/
     <photoID>_thumb.jpg
 ```
 
-- **Database.** SQLite in WAL mode at `DB_PATH`. It holds `users`, `galleries`, `photos`, `settings` (a single row), and `sessions`. The schema is created at startup with `CREATE TABLE IF NOT EXISTS`; there is no migration system yet, so a schema change in development needs a fresh database file.
+- **Database.** SQLite in WAL mode at `DB_PATH`. It holds `users`, `galleries`, `photos`, `settings` (a single row), and `sessions`. At startup the base schema is created with `CREATE TABLE IF NOT EXISTS`, then the `migrations` list in `db.go` brings the database up to date, tracked by `PRAGMA user_version`. To change the schema, append a migration; never edit an applied one. The server refuses to start on a database newer than it knows.
 - **Deletes.** Deleting a gallery or a user removes the rows first, then the directory. If removing files fails, the error is logged and the rows stay deleted, so orphaned files are possible but no row ever points to a missing file.
 - **Photo display order** is the `position` column.
 - **Backups:** copy both `DB_PATH` and `PHOTOS_DIR`. For a consistent database copy while the server runs, use `sqlite3 gallery.db ".backup backup.db"`.
@@ -272,13 +284,13 @@ There are no HTTP read/write timeouts, so large uploads and ZIP downloads can ru
 |------|----------------|
 | `main.go` | Configuration, startup, graceful shutdown. |
 | `app.go` | Routes, middleware (logging, CSRF, rate limits), JSON helpers. |
-| `db.go` | Opening SQLite, the schema, the transaction helper. |
+| `db.go` | Opening SQLite, the schema and migrations, the transaction helper. |
 | `auth.go` | Register, login, logout, password change, `requireUser`/`requireAdmin`. |
 | `users.go` | Admin user management. |
 | `settings.go` | Studio branding. |
 | `galleries.go` | Gallery model, download period logic, slugs, studio gallery handlers. |
 | `photos.go` | Upload pipeline, image versions, reorder, delete, file serving. |
-| `public.go` | Client link handlers, single downloads, the ZIP stream. |
+| `public.go` | Client link handlers, single downloads, the ZIP stream, download statistics. |
 | `server_test.go` | End-to-end test of the studio, client, user and security flows. |
 
 Libraries: [chi](https://github.com/go-chi/chi) (router), [httprate](https://github.com/go-chi/httprate) (rate limits), [scs](https://github.com/alexedwards/scs) with `sqlite3store` (sessions), [modernc.org/sqlite](https://pkg.go.dev/modernc.org/sqlite) (pure-Go SQLite), [x/crypto/bcrypt](https://pkg.go.dev/golang.org/x/crypto/bcrypt), [imaging](https://github.com/disintegration/imaging) (resizing), [gen2brain/heic](https://github.com/gen2brain/heic) (HEIC decoding via WebAssembly, no cgo), [google/uuid](https://github.com/google/uuid), [gosimple/slug](https://github.com/gosimple/slug). ZIPs use the standard library's `archive/zip`.
@@ -301,5 +313,4 @@ These are relative to the PRD.
 - **Password reset by email (A5), 2FA (A6), gallery passwords (S5), GPS/EXIF stripping.** Not implemented. Originals are delivered exactly as uploaded.
 - **Branding is site-wide.** There is one studio name and accent colour, not one per user.
 - **Search and sort of the gallery list (G5).** The list is newest first; sort it on the client.
-- **No schema migrations** (see [Storage](#storage)).
 - **No expiry reminders, no deletion of files after expiry.** Files are kept until the gallery is deleted.

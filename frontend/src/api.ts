@@ -20,6 +20,8 @@ export interface Photo {
   webUrl: string;
   originalUrl?: string;
   downloadUrl?: string;
+  downloads?: number; // studio only: single-photo downloads by clients
+  lastDownloadedAt?: string; // UTC RFC 3339
 }
 
 export interface Gallery {
@@ -34,6 +36,8 @@ export interface Gallery {
   coverPhotoId?: string;
   coverThumbUrl?: string;
   photoCount: number;
+  zipDownloads?: number; // gallery editor only: "download all" ZIPs started by clients
+  zipLastDownloadedAt?: string; // UTC RFC 3339
   photos?: Photo[];
 }
 

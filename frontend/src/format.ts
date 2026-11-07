@@ -33,6 +33,18 @@ export function previewLastOpenDay(months: number): string {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+// For full timestamps (RFC 3339), shown in the viewer's local time.
+export function fmtDateTime(iso: string): string {
+  return new Date(iso).toLocaleString('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit',
+  });
+}
+
+// Download statistics, e.g. "2 downloads · last Nov 5, 2026, 2:02 PM".
+export function downloadsText(count = 0, last?: string): string {
+  return count && last ? `${plural(count, 'download')} · last ${fmtDateTime(last)}` : 'Not downloaded yet';
+}
+
 export function plural(n: number, one: string, many = one + 's'): string {
   return `${n} ${n === 1 ? one : many}`;
 }

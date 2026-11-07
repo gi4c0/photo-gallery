@@ -95,6 +95,7 @@ What the app stores and sends:
 - **Studio accounts:** email address and bcrypt password hash, in `dbPath`.
 - **Photos:** originals are stored and downloaded unchanged, with all EXIF metadata, which can include GPS location and camera serial numbers. Thumbnails and web-size versions are re-encoded and carry no EXIF.
 - **Cookies:** one session cookie for signed-in studio users, which is strictly necessary. Clients get no cookies. The app needs no consent banner.
+- **Download statistics:** per gallery, how many times clients started the "download all" ZIP and when last. Per photo, how many times it was downloaded singly and when last. Only the photographer sees them. The app stores no IP address, device or per-download history with them. Deleting the gallery or photo deletes its statistics.
 - **Logs:** request logs hold method, path with client-link slugs redacted, status, size and duration. They hold no IP addresses. Rate limiters keep IP addresses in memory only.
 - **Third parties:** none. Fonts are bundled with the frontend build, so browsers contact only your server.
 
@@ -102,7 +103,7 @@ Retention: nothing is deleted automatically. When the download period ends, clie
 
 Your part as the operator:
 
-- Publish a privacy notice that says what you store, why and for how long.
+- Publish a privacy notice that says what you store, why and for how long. Include the download statistics: you count downloads per gallery and per photo, and keep the date of the last one, to know whether clients received their photos (legitimate interest). They are kept until you delete the gallery.
 - Sign a data processing agreement with your hosting provider.
 - Set a retention period for backups of `photosDir` and `dbPath`. Deleted photos stay in backups until the backups expire.
 - Handle client requests to delete or export their photos. Deleting a single photo or a whole gallery is available in the gallery editor.

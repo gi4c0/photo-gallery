@@ -101,21 +101,27 @@ type photoOut struct {
 	WebURL      string `json:"webUrl"`                // ~2048px, for the lightbox
 	OriginalURL string `json:"originalUrl,omitempty"` // studio only
 	DownloadURL string `json:"downloadUrl,omitempty"` // client only, while downloads are open
+	// Studio only: single-photo downloads by clients.
+	Downloads        int    `json:"downloads,omitempty"`
+	LastDownloadedAt string `json:"lastDownloadedAt,omitempty"` // UTC RFC 3339
 }
 
 type galleryOut struct {
-	ID            string     `json:"id"`
-	Name          string     `json:"name"`
-	ShotDate      string     `json:"shotDate"`
-	SharedOn      string     `json:"sharedOn"`
-	Months        int        `json:"months"`
-	ExpiresOn     string     `json:"expiresOn,omitempty"`
-	DownloadsOpen bool       `json:"downloadsOpen"`
-	Slug          string     `json:"slug"`
-	CoverPhotoID  string     `json:"coverPhotoId,omitempty"`
-	CoverThumbURL string     `json:"coverThumbUrl,omitempty"`
-	PhotoCount    int        `json:"photoCount"`
-	Photos        []photoOut `json:"photos,omitzero"`
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	ShotDate      string `json:"shotDate"`
+	SharedOn      string `json:"sharedOn"`
+	Months        int    `json:"months"`
+	ExpiresOn     string `json:"expiresOn,omitempty"`
+	DownloadsOpen bool   `json:"downloadsOpen"`
+	Slug          string `json:"slug"`
+	CoverPhotoID  string `json:"coverPhotoId,omitempty"`
+	CoverThumbURL string `json:"coverThumbUrl,omitempty"`
+	PhotoCount    int    `json:"photoCount"`
+	// Gallery editor only: "download all" ZIP downloads by clients.
+	ZipDownloads        int        `json:"zipDownloads,omitempty"`
+	ZipLastDownloadedAt string     `json:"zipLastDownloadedAt,omitempty"` // UTC RFC 3339
+	Photos              []photoOut `json:"photos,omitzero"`
 }
 
 func studioPhotoBase(galleryID string) string { return "/api/galleries/" + galleryID + "/photos/" }
@@ -152,11 +158,53 @@ func (a *app) writeStudioGallery(w http.ResponseWriter, r *http.Request, status 
 		return
 	}
 	out := toGalleryOut(g, effectiveCover(g, photos), len(photos), time.Now())
+	var zipLast sql.NullString
+	if err := a.db.QueryRowContext(r.Context(),
+		`SELECT zip_downloads, zip_last_downloaded_at FROM galleries WHERE id = ?`, g.ID).
+		Scan(&out.ZipDownloads, &zipLast); err != nil {
+		serverError(w, err)
+		return
+	}
+	out.ZipLastDownloadedAt = zipLast.String
+	stats, err := a.photoDownloadStats(r.Context(), g.ID)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
 	out.Photos = make([]photoOut, 0, len(photos))
 	for _, p := range photos {
-		out.Photos = append(out.Photos, p.studioOut(g.ID))
+		po := p.studioOut(g.ID)
+		s := stats[p.ID]
+		po.Downloads, po.LastDownloadedAt = s.count, s.last
+		out.Photos = append(out.Photos, po)
 	}
 	writeJSON(w, status, out)
+}
+
+type downloadStat struct {
+	count int
+	last  string
+}
+
+func (a *app) photoDownloadStats(ctx context.Context, galleryID string) (map[string]downloadStat, error) {
+	rows, err := a.db.QueryContext(ctx,
+		`SELECT id, downloads, last_downloaded_at FROM photos WHERE gallery_id = ?`, galleryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]downloadStat{}
+	for rows.Next() {
+		var id string
+		var s downloadStat
+		var last sql.NullString
+		if err := rows.Scan(&id, &s.count, &last); err != nil {
+			return nil, err
+		}
+		s.last = last.String
+		out[id] = s
+	}
+	return out, rows.Err()
 }
 
 // ---- input validation ----

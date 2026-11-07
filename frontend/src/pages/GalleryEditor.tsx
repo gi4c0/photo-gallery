@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type DragEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { api, uploadPhoto, type ApiError, type Gallery, type Photo } from '../api';
 import { useToast } from '../app';
-import { fmtDate, lastOpenDay, plural } from '../format';
+import { downloadsText, fmtDate, lastOpenDay, plural } from '../format';
 import { BackIcon, EyeIcon, LeftIcon, LinkIcon, RightIcon, StarIcon, TrashIcon, UploadIcon } from '../icons';
 
 interface Upload {
@@ -316,6 +316,7 @@ export default function GalleryEditor() {
                     {isCover && <span className="cover-tag">Cover</span>}
                   </div>
                   <div className="photo-name">{i + 1}. {p.name}</div>
+                  <div className="muted small">{downloadsText(p.downloads, p.lastDownloadedAt)}</div>
                   <div className="photo-actions">
                     <button type="button" className="act-btn" aria-label={`Move ${p.name} earlier`} disabled={i === 0}
                       onClick={() => moveBy(p.id, -1)}><LeftIcon /></button>
@@ -365,6 +366,15 @@ export default function GalleryEditor() {
               onClick={() => run(() => api.restartPeriod(gallery.id), 'Download period restarted from today')}>
               Restart the period from today
             </button>
+          </section>
+
+          <section className="panel">
+            <h2 className="panel-title">Client downloads</h2>
+            <p className="field">
+              Download all (ZIP)
+              <span className="muted small">{downloadsText(gallery.zipDownloads, gallery.zipLastDownloadedAt)}</span>
+            </p>
+            <p className="hint">Single-photo downloads are shown under each photo.</p>
           </section>
 
           <section className="panel">

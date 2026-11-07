@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 type testClient struct {
@@ -209,6 +210,30 @@ func TestStudioAndClientFlow(t *testing.T) {
 		t.Fatalf("zip: %v %d", err, len(zr.File))
 	}
 
+	// Download statistics: a resumed download (Range from a later offset) is not a new download.
+	rangeReq, _ := http.NewRequest("GET", srv.URL+cg.Photos[0].DownloadURL, nil)
+	rangeReq.Header.Set("Range", "bytes=10-")
+	if resp, err := http.DefaultClient.Do(rangeReq); err != nil || resp.StatusCode != 206 {
+		t.Fatalf("resumed download: %v %v", err, resp)
+	} else {
+		resp.Body.Close()
+	}
+	if s := studio.json("GET", "/api/galleries/"+g.ID, nil, &g); s != 200 {
+		t.Fatalf("studio gallery: %d", s)
+	}
+	if g.ZipDownloads != 1 || g.ZipLastDownloadedAt == "" {
+		t.Fatalf("zip stats: %d %q", g.ZipDownloads, g.ZipLastDownloadedAt)
+	}
+	if p0, p1 := g.Photos[0], g.Photos[1]; p0.Downloads != 1 || p0.LastDownloadedAt == "" || p1.Downloads != 0 || p1.LastDownloadedAt != "" {
+		t.Fatalf("photo stats: %+v %+v", p0, p1)
+	}
+	if _, err := time.Parse(time.RFC3339, g.ZipLastDownloadedAt); err != nil {
+		t.Fatalf("zip timestamp: %v", err)
+	}
+	if cg.Photos[0].Downloads != 0 {
+		t.Fatal("clients must not see download stats")
+	}
+
 	// Expired period blocks downloads but not viewing.
 	if _, err := db.Exec(`UPDATE galleries SET shared_on = '2020-01-01' WHERE id = ?`, g.ID); err != nil {
 		t.Fatal(err)
@@ -317,5 +342,21 @@ func TestRedactPath(t *testing.T) {
 		if got := redactPath(in); got != want {
 			t.Errorf("redactPath(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// Reopening a database must not re-run migrations.
+func TestReopenMigratedDB(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+	for i := 0; i < 2; i++ {
+		db, err := openDB(path)
+		if err != nil {
+			t.Fatalf("open %d: %v", i, err)
+		}
+		var v int
+		if err := db.QueryRow(`PRAGMA user_version`).Scan(&v); err != nil || v != len(migrations) {
+			t.Fatalf("user_version = %d, %v", v, err)
+		}
+		db.Close()
 	}
 }

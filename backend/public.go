@@ -92,7 +92,24 @@ func (a *app) clientDownloadPhoto(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if startsDownload(r) {
+		a.recordDownload(r.Context(), `UPDATE photos SET downloads = downloads + 1, last_downloaded_at = `+nowUTC+` WHERE id = ?`, p.ID)
+	}
 	a.serveFile(w, r, a.originalPath(p), p.ContentType, attachment(p.Name))
+}
+
+// startsDownload reports whether r begins a download. Range requests that
+// resume one from a later offset return false, so a resumed download counts once.
+func startsDownload(r *http.Request) bool {
+	rg := r.Header.Get("Range")
+	return r.Method == http.MethodGet && (rg == "" || strings.HasPrefix(rg, "bytes=0-"))
+}
+
+// recordDownload runs a statistics update. A failure is logged and never blocks the download.
+func (a *app) recordDownload(ctx context.Context, query string, id string) {
+	if _, err := a.db.ExecContext(ctx, query, id); err != nil {
+		log.Printf("record download: %v", err)
+	}
 }
 
 // clientDownloadAll streams every original as one ZIP, in gallery order.
@@ -110,6 +127,7 @@ func (a *app) clientDownloadAll(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "gallery has no photos")
 		return
 	}
+	a.recordDownload(r.Context(), `UPDATE galleries SET zip_downloads = zip_downloads + 1, zip_last_downloaded_at = `+nowUTC+` WHERE id = ?`, g.ID)
 
 	zipName := slug.Make(g.Name)
 	if zipName == "" {
