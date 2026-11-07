@@ -8,6 +8,11 @@ import GalleryList from './pages/GalleryList';
 import GalleryEditor from './pages/GalleryEditor';
 import Account from './pages/Account';
 import ClientGallery from './pages/ClientGallery';
+// Self-hosted so visitors' browsers make no requests to third-party font servers.
+import '@fontsource/lato/300.css';
+import '@fontsource/lato/400.css';
+import '@fontsource/lato/700.css';
+import '@fontsource/lato/900.css';
 import './styles.css';
 
 createRoot(document.getElementById('root')!).render(

@@ -20,6 +20,8 @@ export default function GalleryList() {
   }, [toast]);
 
   const photoTotal = galleries?.reduce((n, g) => n + g.photoCount, 0) ?? 0;
+  const open = galleries?.filter((g) => g.downloadsOpen) ?? [];
+  const expired = galleries?.filter((g) => !g.downloadsOpen) ?? [];
 
   return (
     <main className="page page-list">
@@ -39,29 +41,47 @@ export default function GalleryList() {
         <div className="empty">No galleries yet. Create one to start uploading photos.</div>
       )}
 
-      <div className="card-grid">
-        {galleries?.map((g) => (
-          <Link key={g.id} to={`/galleries/${g.id}`} className="gallery-card">
-            <div className="card-cover">
-              {g.coverThumbUrl && <img src={g.coverThumbUrl} alt="" />}
-              <span className={g.downloadsOpen ? 'chip' : 'chip chip-dark'}>{statusLabel(g)}</span>
-            </div>
-            <div>
-              <div className="card-name">{g.name}</div>
-              <div className="muted card-meta">
-                {g.shotDate ? fmtDate(g.shotDate) + ' · ' : ''}{plural(g.photoCount, 'photo')}
-              </div>
-            </div>
-          </Link>
-        ))}
-      </div>
+      <GalleryGrid galleries={open} />
+
+      {expired.length > 0 && (
+        <section className="list-section" aria-labelledby="expired-title">
+          <h2 id="expired-title" className="h2">Downloads expired · {expired.length}</h2>
+          <p className="hint">
+            Clients can still view these galleries. Delete the ones you no longer need, so you don't keep clients'
+            photos longer than necessary.
+          </p>
+          <GalleryGrid galleries={expired} />
+        </section>
+      )}
 
       {modal && <NewGalleryModal onClose={() => setModal(false)} />}
     </main>
   );
 }
 
-const CREATE_MONTHS = [1, 2, 3, 6, 9, 12, 0];
+function GalleryGrid({ galleries }: { galleries: Gallery[] }) {
+  if (galleries.length === 0) return null;
+  return (
+    <div className="card-grid">
+      {galleries.map((g) => (
+        <Link key={g.id} to={`/galleries/${g.id}`} className="gallery-card">
+          <div className="card-cover">
+            {g.coverThumbUrl && <img src={g.coverThumbUrl} alt="" />}
+            <span className={g.downloadsOpen ? 'chip' : 'chip chip-dark'}>{statusLabel(g)}</span>
+          </div>
+          <div>
+            <div className="card-name">{g.name}</div>
+            <div className="muted card-meta">
+              {g.shotDate ? fmtDate(g.shotDate) + ' · ' : ''}{plural(g.photoCount, 'photo')}
+            </div>
+          </div>
+        </Link>
+      ))}
+    </div>
+  );
+}
+
+const CREATE_MONTHS =[1, 2, 3, 6, 9, 12, 0];
 
 function NewGalleryModal({ onClose }: { onClose: () => void }) {
   const navigate = useNavigate();

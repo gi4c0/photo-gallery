@@ -131,6 +131,8 @@ button:not(:disabled), a, label { cursor: pointer; }
 .page-head {
   display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 32px;
 }
+.list-section { margin-top: 64px; }
+.list-section .hint { margin: 6px 0 24px; }
 .empty { border: 1px dashed var(--dash); padding: 64px 24px; text-align: center; color: var(--muted); font-size: 15px; }
 
 .card-grid {
